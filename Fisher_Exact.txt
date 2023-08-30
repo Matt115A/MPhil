@@ -1,0 +1,20 @@
+from scipy.stats import fisher_exact
+
+# Data: [Positive cases, Negative cases]
+data_population1 = [2, 154]  # 2 out of 156 are positive
+data_population2 = [3, 19]   # 3 out of 22 are positive
+
+# Contingency table
+contingency_table = [data_population1, data_population2]
+
+# Perform Fisher's Exact Test
+odds_ratio, p_value = fisher_exact(contingency_table)
+
+print(f"Odds Ratio: {odds_ratio}")
+print(f"P-Value: {p_value}")
+
+alpha = 0.05
+if p_value < alpha:
+    print("The proportions of the two populations are statistically different.")
+else:
+    print("The proportions of the two populations are not statistically different.")

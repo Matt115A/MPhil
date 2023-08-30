@@ -1,0 +1,218 @@
+import sys
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks, peak_widths
+from matplotlib.widgets import RectangleSelector
+from sklearn.decomposition import PCA
+from scipy.stats import skew, kurtosis
+
+
+def read_data(filename, window_size):
+    data = np.loadtxt(filename)
+    time = data[:, 0]
+    voltage = data[:, 1]
+
+    # Adjust the time array to match the smoothed voltage
+    offset = (window_size - 1)
+    start = offset // 2
+    end = -offset // 2 if offset % 2 == 0 else -(offset // 2 + 1)
+    time = time[start:end or None]  # If end is 0, we take the whole array
+
+    return time, voltage
+
+
+def rolling_mean(signal, window_size):
+    return np.convolve(signal, np.ones(window_size)/window_size, mode='valid')
+
+
+def identify_peaks(voltage):
+    peaks, _ = find_peaks(voltage, distance=20, height=0.6)  # Adjust peak-finding params
+    return peaks
+
+
+def calculate_peak_properties(time, voltage, peaks):
+    widths, height_locs, rel_heights, prominences = peak_widths(voltage, peaks, rel_height=0.5)
+    # Convert relative positions to indices
+    start_indices = (peaks - (widths / 2)).astype(int)
+    end_indices = (peaks + (widths / 2)).astype(int)
+
+    average_voltages = []
+    for start, end in zip(start_indices, end_indices):
+        average_voltages.append(np.mean(voltage[start:end]))
+
+    return widths, average_voltages
+
+
+
+def save_to_file(filename, widths, max_voltages):
+    with open(filename, "w") as f:
+        for w, mv in zip(widths, max_voltages):
+            f.write(f"{w} {mv}\n")
+
+
+def plot_interactive_scatter(time, voltage, widths, max_voltages):
+    fig, ax = plt.subplots()
+    scatter = ax.scatter(widths, max_voltages, picker=True)
+    ax.set_xlabel("Peak Width")
+    ax.set_ylabel("Max Voltage")
+
+    def on_pick(event):
+        ind = event.ind[0]
+        fig_peak, ax_peak = plt.subplots()
+        ax_peak.plot(time, voltage)
+
+        peak_center = time[peaks[ind]]
+        half_width = 20 * widths[ind] * (time[1] - time[0])
+        ax_peak.set_xlim(peak_center - half_width, peak_center + half_width)
+        ax_peak.axvline(peak_center, color='purple', linestyle='--')
+        plt.show()
+
+    fig.canvas.mpl_connect('pick_event', on_pick)
+    plt.show()
+
+
+def plot_filtered_histogram(widths, max_voltages, min_width, max_width):
+    """
+    Plots an interactive histogram of voltages for peaks within a specified width range.
+    
+    Parameters:
+    - widths: array of peak widths.
+    - max_voltages: array of maximum voltages associated with each peak.
+    - min_width: minimum peak width for filtering.
+    - max_width: maximum peak width for filtering.
+    """
+    
+    # Filter voltages based on peak width range
+    filtered_voltages = [v for w, v in zip(widths, max_voltages) if min_width <= w <= max_width]
+
+    # onselect function definition inside plot_filtered_histogram
+    def onselect(event_press, event_release):
+        # Extracting x-coordinates from the event objects
+        x1 = event_press.xdata
+        x2 = event_release.xdata
+        vmin, vmax = sorted([x1, x2])
+        # Filter voltages based on the selection range
+        selected_voltages = [v for v in filtered_voltages if vmin <= v <= vmax]
+
+        proportion_selected = len(selected_voltages) / len(filtered_voltages)
+        print(f"Selected proportion of total population: {proportion_selected:.2%}")
+
+    # Plot histogram
+    fig, ax = plt.subplots()
+    n, bins, patches = ax.hist(filtered_voltages, bins=500, color='purple')
+    
+    plt.title(f"Histogram of Voltages with Peak Widths between {min_width} and {max_width}")
+    plt.xlabel("Voltage")
+    plt.ylabel("Counts")
+    plt.xlim([0.4,1])
+    #plt.yscale('log')  # Set y-axis to logarithmic scale
+
+    # Add the RectangleSelector
+    rect_select = RectangleSelector(ax, onselect, useblit=True,
+                                    button=[1, 3],  # don't use middle button (2)
+                                    minspanx=5, minspany=5,
+                                    spancoords='pixels',
+                                    interactive=True)
+
+    plt.show()
+
+def calculate_advanced_peak_properties(time, voltage, peaks):
+    widths, _, _, _ = peak_widths(voltage, peaks, rel_height=0.5)
+    
+    # Filter out zero-width peaks
+    valid_indices = np.where(widths > 0)[0]
+    widths = widths[valid_indices]
+    valid_peaks = peaks[valid_indices]
+    
+    start_indices = (valid_peaks - (widths / 2)).astype(int)
+    end_indices = (valid_peaks + (widths / 2)).astype(int)
+
+    features = []
+    for width, start, end in zip(widths, start_indices, end_indices):
+        segment = voltage[start:end]
+        
+        # Check for empty slices
+        if segment.size == 0:
+            continue
+        
+        max_voltage = np.max(segment)
+        min_voltage = np.min(segment)
+        mean_voltage = np.mean(segment)
+        std_dev_voltage = np.std(segment)
+        skewness = skew(segment)  # Calculate skewness
+        kurt = kurtosis(segment)  # Calculate kurtosis
+
+        # Ensure that the array dimensions are consistent
+        feature_array = [width, max_voltage, min_voltage, mean_voltage, std_dev_voltage, skewness, kurt]
+        
+        features.append(feature_array)
+    
+    return np.array(features), widths
+
+def perform_pca_and_plot(features, peak_voltages):
+    pca = PCA(n_components=7)
+    principal_components = pca.fit_transform(features)
+    
+    fig, ax = plt.subplots()
+    scatter = ax.scatter(
+        principal_components[:, 0],
+        principal_components[:, 1],
+        c=peak_voltages,  # Set colour based on peak voltage
+        cmap='viridis',
+        alpha=0.2  # Adjust alpha for better visualization
+    )
+    cbar = plt.colorbar(scatter)
+    cbar.set_label('Peak Voltage')
+    
+    ax.set_title('PCA of Peaks')
+    ax.set_xlabel('Principal Component 1')
+    ax.set_ylabel('Principal Component 2')
+    plt.show()
+
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python Matt_Peak_Finder.txt <input_filename>")
+        sys.exit(1)
+
+    filename = sys.argv[1]
+    window_size = 30  # Adjust window size here
+    time, voltage = read_data(filename, window_size)
+    smoothed_voltage = rolling_mean(voltage, window_size)
+
+    # Plot the whole trace with the smoothed values
+    plt.figure(figsize=(15, 5))
+    plt.plot(time, smoothed_voltage, label="Smoothed Voltage")
+    plt.title("Full Trace with Rolling Mean Smoothing")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Voltage")
+    plt.legend()
+    plt.show()
+
+    # Continue with the rest of the script
+    peaks = identify_peaks(smoothed_voltage)
+    widths, max_voltages = calculate_peak_properties(time, smoothed_voltage, peaks)
+    #save_to_file("paired_data.txt", widths, max_voltages)
+    plot_interactive_scatter(time, smoothed_voltage, widths, max_voltages)
+    # Add histogram plot for a specific range of peak widths
+    min_width = 5  # Adjust gate here
+    max_width = 70  # Adjust gate here
+    #plot_filtered_histogram(widths, max_voltages, min_width, max_width)
+# New advanced feature calculation
+    features, all_widths = calculate_advanced_peak_properties(time, smoothed_voltage, peaks)
+    
+    # Get the max_voltages corresponding to these features
+    max_voltages = features[:, 1]  # Assuming that max_voltage is the second column in your features array
+    
+    # Apply the droplet width filter
+    filtered_features = features[(all_widths >= min_width) & (all_widths <= max_width)]
+    filtered_max_voltages = max_voltages[(all_widths >= min_width) & (all_widths <= max_width)]
+
+    # Handle case where features might contain NaN values.
+    valid_rows = ~np.isnan(filtered_features).any(axis=1)
+    filtered_features = filtered_features[valid_rows]
+    filtered_max_voltages = filtered_max_voltages[valid_rows]
+    
+    # Perform PCA and plot
+    perform_pca_and_plot(filtered_features, filtered_max_voltages)
