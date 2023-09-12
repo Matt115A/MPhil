@@ -1,3 +1,7 @@
+######### Rolling means for droplet identification on a LED-FADS setup ##########
+
+######### Matt Penner, 2023 ###########
+
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -199,11 +203,10 @@ if __name__ == "__main__":
     min_width = 5  # Adjust gate here
     max_width = 70  # Adjust gate here
     #plot_filtered_histogram(widths, max_voltages, min_width, max_width)
-# New advanced feature calculation
     features, all_widths = calculate_advanced_peak_properties(time, smoothed_voltage, peaks)
     
     # Get the max_voltages corresponding to these features
-    max_voltages = features[:, 1]  # Assuming that max_voltage is the second column in your features array
+    max_voltages = features[:, 1]
     
     # Apply the droplet width filter
     filtered_features = features[(all_widths >= min_width) & (all_widths <= max_width)]
